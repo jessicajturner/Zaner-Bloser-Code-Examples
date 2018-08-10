@@ -1,0 +1,101 @@
+```{r Packages}
+library(readxl)
+library(data.table)
+library(dplyr)
+library(plyr)
+library(caTools)
+library(ROSE)
+library(pROC)
+library(rpart)
+library(DMwR)
+```
+
+```{r Importing Data}
+#Importing Data in
+all_data <- read_excel("C:/Users/jjturner/Desktop/all_data.xlsx")
+all_data$SPCOMP<-all_data$ENROLLMENT/all_data$COMPUTERS_TOT
+```
+
+
+```{r Cleaning Data}
+#Select variables for logit model
+logit<-select(all_data,PID,ENROLLMENT,NUM_CLASS,POVPER,SPCOMP,PUPEXPAIM,PUPEXPCURR,BEFOREAFT,ESL_PRG,LIB_MEDIA_CTR,DISTSIZE,ZIPMETRO,TAG_PRG,ENROLL_SHIFT,SKCustomer)
+
+#Correcting labeling variables
+logit$PUPEXPAIM<-ifelse(logit$PUPEXPAIM=="Z",NA,logit$PUPEXPAIM)
+logit$SKCustomer[is.na(logit$SKCustomer)]<-0
+logit$ESL_PRG[is.na(logit$ESL_PRG)]<-"N"
+logit$LIB_MEDIA_CTR[is.na(logit$LIB_MEDIA_CTR)]<-"N"
+logit$TAG_PRG[is.na(logit$TAG_PRG)]<-"N"
+
+#Factors
+logit[6:15]<-lapply(logit[6:15],as.factor)
+
+#Numbers
+logit$NUM_CLASS[is.na(logit$NUM_CLASS)] <- mean(logit$NUM_CLASS, na.rm = TRUE)
+logit$POVPER<-as.numeric(logit$POVPER)
+logit$POVPER[is.na(logit$POVPER)] <- mean(logit$POVPER, na.rm = TRUE)
+logit$ENROLLMENT[is.na(logit$ENROLLMENT)] <- mean(logit$ENROLLMENT, na.rm = TRUE)
+logit$SPCOMP[is.na(logit$SPCOMP)] <- mean(logit$SPCOMP, na.rm = TRUE)
+logit<-na.omit(logit)
+```
+
+```{r}
+#Splitting Data into a data set for creating a model and a data set for testing the model
+split <- sample.split(logit$SKCustomer, SplitRatio = 0.75)
+train <- subset(logit, split == TRUE)
+test <- subset(logit, split == FALSE)
+table(train$SKCustomer)
+```
+
+```{r}
+#Creates Synthetic Data to account for imbalance
+balanced.data <- SMOTE(SKCustomer~ENROLLMENT+NUM_CLASS+POVPER+SPCOMP+PUPEXPAIM+PUPEXPCURR+BEFOREAFT+ESL_PRG+LIB_MEDIA_CTR+DISTSIZE+ZIPMETRO+TAG_PRG+ENROLL_SHIFT, as.data.frame(train),perc.over =5685, perc.under=102)
+table(balanced.data$SKCustomer)
+```
+
+```{r}
+#Creating the formula
+probit<-glm(SKCustomer~ENROLLMENT+NUM_CLASS+POVPER+SPCOMP+PUPEXPAIM+PUPEXPCURR+BEFOREAFT+ESL_PRG+LIB_MEDIA_CTR+DISTSIZE+ZIPMETRO+TAG_PRG+ENROLL_SHIFT,family=binomial(link="logit"),data=balanced.data)
+```
+
+```{r}
+#Creates ROC/AUC curve to see accuracy of all variables
+tree.logit<-rpart(SKCustomer~ENROLLMENT+NUM_CLASS+POVPER+SPCOMP+PUPEXPAIM+PUPEXPCURR+BEFOREAFT+ESL_PRG+LIB_MEDIA_CTR+DISTSIZE+ZIPMETRO+TAG_PRG+ENROLL_SHIFT,balanced.data)
+pred.tree.logit<-predict(tree.logit,newdata=logit)
+roc.curve(logit$SKCustomer,pred.tree.logit[,2])
+```
+
+
+```{r}
+#Summary of model
+summary(probit)
+```
+
+```{r}
+#Analysis of deviance for model
+anova(probit, test="Chisq")
+```
+
+```{r}
+#Testing Accuracy
+predicted<-predict(probit,test,type="response")
+predicted<-ifelse(predicted>0.5,1,0)
+misClasificError<-mean(predicted != test$SKCustomer)
+print(paste('Accuracy',1-misClasificError))
+```
+
+```{r}
+#Combines model formula with original data set to get percent by row
+Customers<-cbind(logit, predict(probit, newdata = logit, type = "response",se = TRUE))
+```
+
+```{r}
+#See how important each variable is in predicting probability
+caret::varImp(probit)
+```
+
+```{r}
+#Picks best variables based on lowest AIC. Default is backwards
+step(probit)
+```
