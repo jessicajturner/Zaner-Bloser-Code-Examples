@@ -1,0 +1,310 @@
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(shiny)
+library(dplyr)
+library(data.table)
+library(DT)
+library(knitr)
+library(readxl)
+library(readr)
+library(ResourceSelection)
+library(caret)
+library(pscl)
+```
+
+
+```{r data, include=FALSE}
+#Reading and Importing the FY18 Sales Data
+HWSales <- read_excel("K:/Common/ZANERBLOSER/Intern - JT/Customer Segmentation Project/Data/HWSales.xlsx")
+HWSales[is.na(HWSales)]<-0
+HWSales$pid<-as.character(HWSales$pid)
+HWSales$Handwriting.Customer<-ifelse(HWSales$FY14HW>0|HWSales$FY15HW>0|HWSales$FY16HW>0|HWSales$FY17HW>0|HWSales$FY18HW>0,1,0)
+
+#Reading and Importing the FY18 Sales Data
+SKSales <- read_excel("K:/Common/ZANERBLOSER/Intern - JT/Customer Segmentation Project/Data/SKSales.xlsx")
+SKSales[is.na(SKSales)]<-0
+SKSales$Super.Kids.Customer<-ifelse(SKSales$FY14SK>0|SKSales$FY15SK>0|SKSales$FY16SK>0|SKSales$FY17SK>0|SKSales$FY18SK>0,1,0)
+
+#Reading and Importing the FY18 Sales Data
+SPLSales <- read_excel("K:/Common/ZANERBLOSER/Intern - JT/Customer Segmentation Project/Data/SPLSales.xlsx")
+SPLSales[is.na(SPLSales)]<-0
+SPLSales$pid<-as.character(SPLSales$pid)
+SPLSales$Spelling.Customer<-ifelse(SPLSales$FY14SPL>0|SPLSales$FY15SPL>0|SPLSales$FY16SPL>0|SPLSales$FY17SPL>0|SPLSales$FY18SPL>0,1,0)
+
+aff <- read_excel("K:/Common/ZANERBLOSER/Intern - JT/Customer Segmentation Project/Data/affluence indicator.xlsx")
+aff$Zipcode<-as.character(aff$Zipcode)
+
+#All MDR Data
+MDR <- read_excel("K:/Common/ZANERBLOSER/Intern - JT/Customer Segmentation Project/Data/MDR.xlsx")
+colnames(MDR)[1]<-"pid"
+MDR$Zipcode<-as.character(MDR$Zipcode)
+
+#All Educational Spending Data
+Spend<-read_excel("K:/Common/ZANERBLOSER/Intern - JT/Customer Segmentation Project/Data/Educational Spending Unit.xlsx")
+
+```
+
+```{r data table,include=FALSE}
+#Combining the Data
+MDR$pid<-as.character(MDR$pid)
+MDR$NCESHID<-as.character(MDR$NCESHID)
+all_data<-left_join(MDR,aff,by="Zipcode")
+all_data<-left_join(all_data,HWSales,by="pid")
+all_data<-left_join(all_data,SKSales,by="pid")
+all_data<-left_join(all_data,SPLSales,by="pid")
+all_data<-left_join(all_data,Spend,by="NCESHID")
+```
+
+```{r}
+all_data[32:39][is.na(all_data[32:39])]<-"N"
+all_data[45:47][is.na(all_data[45:47])]<-"N"
+all_data$Handwriting.Customer[is.na(all_data$Handwriting.Customer)]<-0
+all_data$Super.Kids.Customer[is.na(all_data$Super.Kids.Customer)]<-0
+all_data$Spelling.Customer[is.na(all_data$Spelling.Customer)]<-0
+all_data$Spending.Per.Pupil<-ifelse(all_data$Spending.Per.Pupil=="Z",NA,all_data$Spending.Per.Pupil)
+all_data$Spending.On.Instruction.Per.Pupil<-ifelse(all_data$Spending.On.Instruction.Per.Pupil=="Z",NA,all_data$Spending.On.Instruction.Per.Pupil)
+
+#Turning NA to column mean
+myNum <- function(x) {
+  if (is.numeric(x)) {
+    x[is.na(x)] <- mean(x, na.rm = TRUE)
+    x
+  } else {
+    x
+  }
+}
+all_data[]<-lapply(all_data,myNum)
+
+#Turning Characters into Factors
+myFact <- function(x) {
+  if (is.character(x)) {
+    x <- as.factor(x)
+    x
+  } else {
+    x
+  }
+}
+all_data[]<-lapply(all_data,myFact)
+```
+
+
+```{r}
+all_variables<-as.data.frame(colnames(all_data))
+colnames(all_variables)[1]<-"variables"
+all_variables$name<-gsub("[.]"," ",all_variables$variables)
+```
+
+
+
+Customer Profiles {data-orientation=columns}
+==============================
+
+Column {data-width=150}
+-----------------------------------------------------------------------
+
+
+
+
+### Download Profiles
+
+```{r}
+## Download Button
+downloadButton('downloadData','Download Result Set')
+
+downloadHandler(filename = function() {
+     paste('Customers-', input$product, '.csv', sep='')
+   },
+     content = function(file) {
+     write.csv(Customers(), file, row.names = FALSE)
+   }
+)
+```
+
+Column {data-width=700}
+-----------------------------------------------------------------------
+
+### Customers
+
+```{r}
+Customers<-reactive({
+   Customers<-cbind(customerProfile(), predict(model(), newdata = customerProfile(), type = "response",se = TRUE))
+   setorder(Customers,-fit)
+})
+#Prints data table
+DT::renderDataTable({
+ DT::datatable(Customers(),fillContainer = TRUE,options=list("pageLength"=25),rownames = FALSE)
+})
+```
+
+
+Model Coefficients {data-orientation=columns}
+==================
+
+Column {data-width=250}
+------------------------
+
+### Model Creator
+
+```{r}
+#Creates drop down bar to pick product
+selectInput("product", label = "Product:",
+          choices =c( "Handwriting"=names(all_data)[62],"Super Kids"=names(all_data)[68],
+                      "Spelling"=names(all_data)[74]))
+
+#Creates place to allow person to pick all the variables they want to test
+selectizeInput("variables",label="Variables for Model:",choices=c(names(all_data)[8:56],
+                                                                  names(all_data)[76:134]),multiple=TRUE,selected="Enrollment")
+
+
+#Making customer list have information
+customerProfile<-reactive({
+  all_data<-dplyr::select(state(),pid,State,City,Street,District,input$product,input$variables)
+  all_data<-na.omit(all_data)
+})
+
+#Changing data table based on selected variables
+product_select<-reactive({
+  all_data<-dplyr::select(state(),input$product,input$variables)
+  all_data<-na.omit(all_data)
+})
+
+#Creating the formula
+regFormula<-reactive({
+  reformulate(termlabels = input$variables,response=input$product)
+})  
+
+#Creating index as a variable
+index<-reactive({
+  indexes=sample(1:nrow(product_select()),size=0.2*nrow(product_select()))
+})
+
+train<-reactive({
+  train<-product_select()[-index(),]
+})
+
+# bivariate model
+model <- reactive({
+    glm(regFormula(),family=binomial(link="logit"), data = train())
+  })
+
+#Creating Checkbox for states
+states<-c("Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado", "Connecticut", "Delaware", "Florida", "Georgia", "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas", "Kentucky", "Louisiana", "Maine", "Maryland", "Massachusetts", "Michigan", "Minnesota", "Mississippi", "Missouri", "Montana", "Nebraska", "Nevada", "New Hampshire", "New Jersey", "New Mexico", "New York", "North Carolina", "North Dakota", "Ohio", "Oklahoma", "Oregon", "Pennsylvania", "Rhode Island", "South Carolina", "South Dakota", "Tennessee", "Texas", "Utah", "Vermont", "Virginia", "Washington", "West Virginia", "Wisconsin", "Wyoming")
+checkboxGroupInput("state", "States included in Model:", choices = states, selected=states,inline=TRUE)
+
+state <- reactive({
+  all_data%>%filter(State %in% input$state)
+})
+
+#Backward Regression
+actionButton("regression","Backwards-Regression")
+
+backward<-eventReactive(input$regression,{
+  step(model(),direction="backward",trace=0)
+  })
+```
+
+
+Column
+------------------------
+
+###Current Model
+```{r}
+#Prints data table
+renderPrint({
+ summary(model())
+})
+```
+
+
+Column
+------------------------
+
+###Backward Regression
+```{r}
+renderPrint({
+  backward()
+})
+```
+
+
+Model Accuracy 
+==================
+
+Column {data-width=650}
+-----------------------------------------------------------------------
+
+### Analysis of Deviance
+
+```{r}
+renderPrint({
+  anova(model(),test="Chisq")
+})
+```
+
+
+Column {data-width=350}
+-----------------------------------------------------------------------
+
+### Predictive Power
+
+```{r}
+renderPrint({
+  varImp(model())
+})
+```
+
+###Accuracy
+
+```{r}
+misClasificError<-reactive({
+  predicted<-predict(model(),test(),type="response")
+  predicted<-ifelse(predicted>0.5,1,0)
+  misClasificError<-mean(predicted != test()[[input$product]])
+  })
+
+
+renderPrint({
+  print(paste('Accuracy',1-misClasificError()))
+})
+```
+
+###Goodness of Fit
+
+```{r}
+test<-reactive({
+  test<-product_select()[index(),]
+})
+
+hoslem<-reactive({
+  yhat<-predict(model(),test(),type="response")
+  hoslem.test(test()[[input$product]],yhat)
+})
+renderPrint({
+  hoslem()
+})
+```
+
+Variable Strength
+==================
+
+Column
+------------------------
+
+###Multicollinearity
+
+```{r}
+ renderPrint({
+   car::vif(model())
+})
+```
+
+Column
+------------------------
+
+###Coefficient Correlation
+
+```{r}
+ renderPrint({
+   cor(product_select())
+})
+```
