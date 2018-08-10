@@ -1,0 +1,97 @@
+```{r Packages}
+library(readxl)
+library(data.table)
+library(dplyr)
+library(plyr)
+library(caTools)
+library(pROC)
+library(rpart)
+library(DMwR)
+library(ROSE)
+library(randomForest)
+library(party)
+library(e1071)
+```
+
+```{r Importing Data}
+#Importing Data in
+all_data <- read_excel("C:/Users/jjturner/Desktop/all_data.xlsx")
+all_data$SPCOMP<-all_data$ENROLLMENT/all_data$COMPUTERS_TOT
+```
+
+
+```{r Cleaning Data}
+#Set seed to get reproducible information
+set.seed(219)
+
+#Select variables for logit model
+logit<-select(all_data,PID,ENROLLMENT,NUM_CLASS,POVPER,SPCOMP,PUPEXPAIM,PUPEXPCURR,BEFOREAFT,ESL_PRG,DISTSIZE,ZIPMETRO,TAG_PRG,ENROLL_SHIFT,SKCustomer)
+
+#Correcting labeling variables
+logit$PUPEXPAIM<-ifelse(logit$PUPEXPAIM=="Z",NA,logit$PUPEXPAIM)
+logit$PUPEXPCURR<-ifelse(logit$PUPEXPCURR=="Z",NA,logit$PUPEXPCURR)
+logit$SKCustomer[is.na(logit$SKCustomer)]<-0
+logit$ESL_PRG[is.na(logit$ESL_PRG)]<-"N"
+# logit$LIB_MEDIA_CTR[is.na(logit$LIB_MEDIA_CTR)]<-"N"
+logit$TAG_PRG[is.na(logit$TAG_PRG)]<-"N"
+
+#Factors
+logit[6:14]<-lapply(logit[6:14],as.factor)
+
+#Numbers
+logit$NUM_CLASS[is.na(logit$NUM_CLASS)] <- mean(logit$NUM_CLASS, na.rm = TRUE)
+logit$POVPER<-as.numeric(logit$POVPER)
+logit$POVPER[is.na(logit$POVPER)] <- mean(logit$POVPER, na.rm = TRUE)
+logit$ENROLLMENT[is.na(logit$ENROLLMENT)] <- mean(logit$ENROLLMENT, na.rm = TRUE)
+logit$SPCOMP[is.na(logit$SPCOMP)] <- mean(logit$SPCOMP, na.rm = TRUE)
+logit<-na.omit(logit)
+```
+
+```{r Split Data}
+#Splitting Data into a data set for creating a model and a data set for testing the model
+split <- sample.split(logit$SKCustomer, SplitRatio = 0.75)
+train <- subset(logit, split == TRUE)
+test <- subset(logit, split == FALSE)
+table(train$SKCustomer)
+```
+
+```{r}
+#Creates synthetic data to account for imbalanced data
+balanced.data <- SMOTE(SKCustomer~ENROLLMENT+NUM_CLASS+POVPER+SPCOMP+PUPEXPAIM+PUPEXPCURR+BEFOREAFT+ESL_PRG+DISTSIZE+ZIPMETRO+TAG_PRG+ENROLL_SHIFT, as.data.frame(train),perc.over =5500, perc.under=102)
+table(balanced.data$SKCustomer)
+```
+
+
+```{r}
+#Performs random forest regression
+fit<-randomForest(SKCustomer~ENROLLMENT+NUM_CLASS+POVPER+SPCOMP+PUPEXPAIM+PUPEXPCURR+BEFOREAFT+ESL_PRG+DISTSIZE+ZIPMETRO+TAG_PRG+ENROLL_SHIFT,balanced.data,importance=TRUE,ntree=200,mtry=6)
+```
+
+```{r}
+#Viewing Results
+print(fit) # view results 
+print(importance(fit,type=2)) # importance of each predictor
+#Shows optimal number of trees
+plot(fit)
+pred_fit <- predict(fit, test)
+caret::confusionMatrix(pred_fit, test$SKCustomer)
+```
+
+```{r}
+#Creates one tree visual and prints it as PDF
+x<-ctree(SKCustomer~NUM_CLASS+POVPER+PUPEXPAIM,balanced.data)
+png("plots.png", width=50000, height=8000, res=200)
+print(plot(x, type="simple"))
+dev.off()
+```
+
+```{r}
+#Fits results based on data to see accuracy
+table(predict(fit),balanced.data$SKCustomer)
+```
+
+```{r}
+#Seeing the optimal number of mtry
+t <- tuneRF(balanced.data[, -14], balanced.data[, 14], stepFactor = 0.5, plot = TRUE, ntreeTry = 200, trace = TRUE, improve = 0.05)
+```
+
