@@ -1,0 +1,127 @@
+```{r,include=FALSE}
+library(dplyr)
+library(data.table)
+library(knitr)
+library(ggplot2)
+library(readxl)
+library(ggmap)
+library(gridExtra)
+library(readr)
+library(Amelia)
+library(mlbench)
+library(ResourceSelection)
+```
+
+```{r,include=FALSE}
+#Reading and Importing the FY18 Sales Data
+HWSales <- read_excel("K:/Common/ZANERBLOSER/Intern - JT/Customer Segmentation Project/Data/HWSales.xlsx")
+HWSales[is.na(HWSales)]<-0
+HWSales$pid<-as.character(HWSales$pid)
+HWSales$HW_Customer<-ifelse(HWSales$FY14HW>0|HWSales$FY15HW>0|HWSales$FY16HW>0|HWSales$FY17HW>0|HWSales$FY18HW>0,1,0)
+
+
+aff <- read_excel("K:/Common/ZANERBLOSER/Intern - JT/Customer Segmentation Project/Data/affluence indicator.xlsx")
+aff$mzipcode<-as.character(aff$mzipcode)
+colnames(aff)[2]<-"gini_index"
+
+
+#All MDR Data
+MDR <- read_csv("K:/Common/ZANERBLOSER/Intern - JT/Customer Segmentation Project/Data/Building_M5275010.csv")
+colnames(MDR)[18]<-"mzipcode"
+MDR$mzipcode<-as.character(MDR$mzipcode)
+
+#All Educational Spending Data
+Spend<-read_excel("K:/Common/ZANERBLOSER/Intern - JT/Customer Segmentation Project/Data/Educational Spending Unit.xlsx")
+
+#All ACS Data
+edspend<-read_excel("K:/Common/ZANERBLOSER/Intern - JT/Customer Segmentation Project/Data/Education Spending.xlsx")
+```
+
+```{r,include=FALSE}
+#Combining the Data
+colnames(Spend)[6]<-"NCESHID"
+colnames(edspend)[8]<-"NCESHID"
+colnames(MDR)[2]<-"pid"
+mdr_zip<-left_join(MDR,aff,by="mzipcode")
+all_data<-left_join(mdr_zip,HWSales,by="pid")
+rm(mdr_zip)
+all_data<-left_join(all_data,Spend,by="NCESHID")
+all_data<-left_join(all_data,edspend,by="NCESHID")
+```
+
+
+```{r,include=FALSE}
+#Cleaning Data
+all_data<-filter(all_data,DISTCLASS=="R")
+#all_data$CC<-ifelse(all_data$MSTATE=="OK"|all_data$MSTATE=="TX"|all_data$MSTATE=="SC"|all_data$MSTATE=="VA"|
+                      # all_data$MSTATE=="AK"|all_data$MSTATE=="NE"|all_data$MSTATE=="IN",0,1)
+all_data$PUPEXPAIM<-ifelse(all_data$PUPEXPAIM=="Z",NA,all_data$PUPEXPAIM)
+all_data$POVPER<-as.numeric(all_data$POVPER)
+all_data$COLL_BOUND<-as.numeric(all_data$COLL_BOUND)
+all_data$NUMSCHOOLS<-as.numeric(all_data$NUMSCHOOLS)
+all_data$PCTAIM<-all_data$TCURINST.x/all_data$TOTALEXP.x
+all_data$pupaim<-all_data$E13/all_data$ENROLL
+all_data$cmm<-all_data$V70/all_data$TOTALEXP.x
+```
+
+```{r,include=FALSE}
+#Selecting variables needed for the analysis
+logit<-select(all_data,pid,INST,MSTATE,ENROLLMENT,ZIPMETRO,NUMSCHOOLS,PUPEXPAIM,POVPER,PCTFCOMP,PCTAIM,PCTLTAXP,PCTSFORM,PPITOTAL,HW_Customer)
+#logit <- logit[order(logit$MSTATE),]
+
+#Cleaning up N/A cells
+logit$NUMSCHOOLS[is.na(logit$NUMSCHOOLS)]<-mean(logit$NUMSCHOOLS,na.rm=TRUE)
+logit$POVPER[is.na(logit$POVPER)]<-mean(logit$POVPER,na.rm=TRUE)
+logit$PCTFCOMP[is.na(logit$PCTFCOMP)]<-mean(logit$PCTFCOMP)
+logit<-na.omit(logit)
+
+#Making remaining variables factors
+logit$ZIPMETRO<-as.factor(logit$ZIPMETRO)
+logit$PUPEXPAIM<-as.factor(logit$PUPEXPAIM)
+```
+
+```{r,include=FALSE}
+#Split Data in parts
+logit <- logit[sample(1:nrow(logit)), ]
+indexes=sample(1:nrow(logit),size=0.2*nrow(logit))
+test<-logit[indexes,]
+train<-logit[-indexes,]
+```
+
+```{r,include=FALSE}
+#Takes the train data and creates a logit regression
+train<-train[sample(1:nrow(train)),]
+probit<-glm(HW_Customer~ENROLLMENT+PCTSFORM+ZIPMETRO+NUMSCHOOLS+PUPEXPAIM+POVPER+PCTFCOMP+PCTAIM+PCTLTAXP+PPITOTAL+PCTSFORM,family=binomial(link="logit"),data=train)
+```
+
+##Formula for Model
+```{r,echo=FALSE}
+#Summary of the results from logit regression
+summary(probit)
+```
+
+##Analysis of Deviance
+```{r,echo=FALSE}
+anova(probit, test="Chisq")
+```
+
+##Accuracy of the Model
+```{r,echo=FALSE}
+#Testing Accuracy
+predicted<-predict(probit,test,type="response")
+predicted<-ifelse(predicted>0.5,1,0)
+misClasificError<-mean(predicted != test$HW_Customer)
+print(paste('Accuracy',1-misClasificError))
+```
+
+##Goodness of Fit
+```{r,echo=FALSE}
+yhat<-predict(probit,test,type="response")
+hoslem.test(test$HW_Customer,yhat)
+```
+
+
+```{r,include=FALSE}
+#creating final customer list with probabilities
+Customers <- cbind(logit,predict(probit, newdata=logit, type="response", se.fit=TRUE))
+```
