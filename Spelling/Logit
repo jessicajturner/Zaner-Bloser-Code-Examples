@@ -1,0 +1,153 @@
+```{r,include=FALSE}
+library(dplyr)
+library(data.table)
+library(knitr)
+library(ggplot2)
+library(readxl)
+library(ggmap)
+library(gridExtra)
+library(readr)
+library(Amelia)
+library(mlbench)
+library(ResourceSelection)
+```
+
+```{r,include=FALSE}
+#Reading and Importing the FY18 Sales Data
+SPLSales <- read_excel("K:/Common/ZANERBLOSER/Intern - JT/Customer Segmentation Project/Data/SPLSales.xlsx")
+SPLSales[is.na(SPLSales)]<-0
+SPLSales$pid<-as.character(SPLSales$pid)
+SPLSales$SPL_Customer<-ifelse(SPLSales$FY14SPL>0|SPLSales$FY15SPL>0|SPLSales$FY16SPL>0|SPLSales$FY17SPL>0|SPLSales$FY18SPL>0,1,0)
+
+
+aff <- read_excel("K:/Common/ZANERBLOSER/Intern - JT/Customer Segmentation Project/Data/affluence indicator.xlsx")
+aff$mzipcode<-as.character(aff$mzipcode)
+colnames(aff)[2]<-"gini_index"
+
+
+#All MDR Data
+MDR <- read_csv("K:/Common/ZANERBLOSER/Intern - JT/Customer Segmentation Project/Data/Building_M5275010.csv")
+colnames(MDR)[18]<-"mzipcode"
+MDR$mzipcode<-as.character(MDR$mzipcode)
+
+#All Educational Spending Data
+Spend<-read_excel("K:/Common/ZANERBLOSER/Intern - JT/Customer Segmentation Project/Data/Educational Spending Unit.xlsx")
+
+#All ACS Data
+edspend<-read_excel("K:/Common/ZANERBLOSER/Intern - JT/Customer Segmentation Project/Data/Education Spending.xlsx")
+```
+
+```{r,include=FALSE}
+#Combining the Data
+colnames(Spend)[6]<-"NCESHID"
+colnames(edspend)[8]<-"NCESHID"
+colnames(MDR)[2]<-"pid"
+mdr_zip<-left_join(MDR,aff,by="mzipcode")
+all_data<-left_join(mdr_zip,SPLSales,by="pid")
+rm(mdr_zip)
+all_data<-left_join(all_data,Spend,by="NCESHID")
+all_data<-left_join(all_data,edspend,by="NCESHID")
+```
+
+```{r,include=FALSE}
+#Cleaning Data
+all_data<-filter(all_data,DISTCLASS=="R")
+#all_data$CC<-ifelse(all_data$MSTATE=="OK"|all_data$MSTATE=="TX"|all_data$MSTATE=="SC"|all_data$MSTATE=="VA"|
+                      # all_data$MSTATE=="AK"|all_data$MSTATE=="NE"|all_data$MSTATE=="IN",0,1)
+all_data$PUPEXPAIM<-ifelse(all_data$PUPEXPAIM=="Z",NA,all_data$PUPEXPAIM)
+all_data$POVPER<-as.numeric(all_data$POVPER)
+all_data$COLL_BOUND<-as.numeric(all_data$COLL_BOUND)
+all_data$NUMSCHOOLS<-as.numeric(all_data$NUMSCHOOLS)
+all_data$PCTAIM<-all_data$TCURINST.x/all_data$TOTALEXP.x
+all_data$pupaim<-all_data$E13/all_data$ENROLL
+all_data$cmm<-all_data$V70/all_data$TOTALEXP.x
+```
+
+```{r,include=FALSE}
+#Selecting variables needed for the analysis
+
+logit<-select(all_data,pid,INST,MSTATE,DISTSIZE,POVPER,ENROLLMENT,ZIPMETRO,PUPEXPAIM,gini_index,PCTAIM,PCTFCOMP,PCTLTAXP,PCTSFORM,SPL_Customer)
+#logit <- logit[order(logit$MSTATE),]
+```
+
+
+```{r,include=FALSE}
+#Cleaning up N/A cells
+logit$SPL_Customer[is.na(logit$SPL_Customer)]<-0
+logit$POVPER<-as.numeric(logit$POVPER)
+logit$POVPER[is.na(logit$POVPER)]<-mean(logit$POVPER,na.rm=TRUE)
+logit$gini_index[is.na(logit$gini_index)]<-mean(logit$gini_index,na.rm=TRUE)
+logit$ENROLLMENT[is.na(logit$ENROLLMENT)]<-mean(logit$ENROLLMENT,na.rm=TRUE)
+logit<-na.omit(logit)
+
+#Making remaining variables factors
+logit$ZIPMETRO<-as.factor(logit$ZIPMETRO)
+logit$DISTSIZE<-as.factor(logit$DISTSIZE)
+logit$PUPEXPAIM<-as.factor(logit$PUPEXPAIM)
+```
+
+```{r,include=FALSE}
+#Split Data in parts
+logit <- logit[sample(1:nrow(logit)), ]
+indexes=sample(1:nrow(logit),size=0.2*nrow(logit))
+test<-logit[indexes,]
+train<-logit[-indexes,]
+```
+
+```{r,echo=FALSE}
+train<-train[sample(1:nrow(train)),]
+probit<-glm(SPL_Customer~ZIPMETRO+ENROLLMENT+PUPEXPAIM+POVPER+PCTAIM+PCTFCOMP+PCTLTAXP+PCTSFORM+gini_index,family=binomial(link="logit"),data=train)
+```
+
+##Formula for the Model
+```{r,echo=FALSE}
+summary(probit)
+```
+
+##Analysis of Deviance
+```{r,echo=FALSE}
+anova(probit, test="Chisq")
+```
+
+
+##Accuracy of the Model
+```{r,echo=FALSE}
+#Testing Accuracy
+predicted<-predict(probit,test,type="response")
+predicted<-ifelse(predicted>0.5,1,0)
+misClasificError<-mean(predicted != test$SPL_Customer)
+print(paste('Accuracy',1-misClasificError))
+```
+
+
+##Goodness of Fit
+```{r,echo=FALSE}
+yhat<-predict(probit,test,type="response")
+hoslem.test(test$SPL_Customer,yhat)
+```
+
+```{r,include=FALSE}
+Customers <- cbind(logit,predict(probit, newdata=logit, type="response", se.fit=TRUE))
+Customers$DISTSIZE<-ifelse(Customers$DISTSIZE=="A","1-599 students",
+                           ifelse(Customers$DISTSIZE=="B","600-1,199 students",
+                                  ifelse(Customers$DISTSIZE=="C","1,200-2,499 students",
+                                         ifelse(Customers$DISTSIZE=="D","2,500-4,999 students",
+                                                ifelse(Customers$DISTSIZE=="E","5,000-9,999 students",
+                                                       ifelse(Customers$DISTSIZE=="F","10,000-24,999 students",
+                                                              ifelse(Customers$DISTSIZE=="G","25,000 or more students","Unknown")))))))
+Customers$PUPEXPAIM<-ifelse(Customers$PUPEXPAIM=="A","$1-$144",
+                            ifelse(Customers$PUPEXPAIM=="B","$145-$179",
+                                   ifelse(Customers$PUPEXPAIM=="C","$180-$199",
+                                          ifelse(Customers$PUPEXPAIM=="D","$200-$219",
+                                                 ifelse(Customers$PUPEXPAIM=="E","$220-$249",
+                                                        ifelse(Customers$PUPEXPAIM=="F","$250-$269",
+                                                               ifelse(Customers$PUPEXPAIM=="G","$270-$299",
+                                                                      ifelse(Customers$PUPEXPAIM=="H","$300-$349",
+                                                                              ifelse(Customers$PUPEXPAIM=="I","$350-$399",ifelse(Customers$PUPEXPAIM=="J","$400-$499",ifelse(Customers$PUPEXPAIM=="K","$500 or more","Unknown")))))))))))
+
+Customers$ZIPMETRO<-ifelse(Customers$ZIPMETRO=="U","Urban",
+                           ifelse(Customers$ZIPMETRO=="S","Suburban",
+                                  ifelse(Customers$ZIPMETRO=="T","Town","Rural")))
+Customers$SPL_Customer<-ifelse(Customers$SPL_Customer==1,"Yes","No")
+```
+
