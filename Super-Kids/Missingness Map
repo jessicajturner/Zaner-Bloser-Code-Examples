@@ -1,0 +1,43 @@
+```{r set-up,include=FALSE}
+library(dplyr)
+library(data.table)
+library(knitr)
+library(ggplot2)
+library(readxl)
+library(ggmap)
+library(gridExtra)
+library(readr)
+```
+
+```{r}
+#Reading and Importing the FY18 Sales Data
+FY18Sales <- read_excel("K:/Common/ZANERBLOSER/Intern - JT/Customer Segmentation Project/Data/FY18 Sales by District PID and Product.xlsx")
+FY18Sales[is.na(FY18Sales)]<-0
+FY18Sales$SK_Customer<-ifelse(FY18Sales$FY14SK>0|FY18Sales$FY15SK>0|FY18Sales$FY16SK>0|FY18Sales$FY17SK>0|FY18Sales$FY18SK>0,1,0)
+
+aff <- read_excel("K:/Common/ZANERBLOSER/Intern - JT/Customer Segmentation Project/Data/affluence indicator.xlsx")
+aff$mzipcode<-as.character(aff$mzipcode)
+colnames(aff)[2]<-"gini_index"
+
+
+#All MDR Data
+all_mdr_data <- read_csv("K:/Common/ZANERBLOSER/Intern - JT/Customer Segmentation Project/Data/all_mdr.csv")
+colnames(all_mdr_data)[7]<-"mzipcode"
+all_mdr_data$NCESHID<-as.character(all_mdr_data$NCESHID)
+all_mdr_data$mzipcode<-as.character(all_mdr_data$mzipcode)
+
+#Combining the Data
+mdr_zip<-left_join(all_mdr_data,aff,by="mzipcode")
+all_mdr<-right_join(FY18Sales,mdr_zip,by="pid")
+rm(mdr_zip)
+```
+
+
+```{r}
+library(Amelia)
+library(mlbench)
+
+#Creates missingness map
+missmap(all_mdr,col=c("gray87","cadetblue3"),legend=FALSE)
+
+```
