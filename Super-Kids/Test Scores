@@ -1,0 +1,130 @@
+```{r setup, include=FALSE}
+#Running all the packages and sourcing all the documents you need to make this shiny run
+library(flexdashboard)
+library(shiny)
+library(stats)
+library(dplyr)
+library(data.table)
+library(knitr)
+library(plotly)
+library(ggplot2)
+library(readxl)
+library(gridExtra)
+library(mapdata)
+library(reshape2)
+library(maps)
+library(fiftystater)
+source('K:/Common/ZANERBLOSER/Intern - JT/Dashboard/state converter.R')
+source('K:/Common/ZANERBLOSER/Intern - JT/Dashboard/Data Set-Up.R')
+source('K:/Common/ZANERBLOSER/Intern - JT/Dashboard/Income.R')
+source('K:/Common/ZANERBLOSER/Intern - JT/Dashboard/scores_sales.R')
+source('K:/Common/ZANERBLOSER/Intern - JT/Dashboard/School Information.R')
+source('K:/Common/ZANERBLOSER/Intern - JT/Dashboard/MDR Data.R')
+```
+
+Super Kids Market Overview
+===========================
+
+Column
+-------
+
+###Affluence Indicator
+This looks at the affluence of each district on a scale from 1-5 with 1 being very low affluence and 5 being very high affluence.
+```{r}
+renderPlot({grid.arrange(aff_zb,aff_all,ncol=2)})
+
+```
+
+```{r}
+
+```
+
+
+Column
+----------
+
+###Spending per Pupil for all districts
+```{r}
+renderPlot({grid.arrange(dist_zb,dist_pop,ncol=2)})
+```
+
+
+
+###Spending Per Pupil on Instruction from 2014-2018
+This looks at sales over the year to see what proportion of sales are from the different amounts of spending per student
+```{r}
+renderPlotly({
+  ggplotly(ggplot(data=pup_sales,aes(variable,value,group=factor(PUPEXPAIM),color=PUPEXPAIM))+geom_point()+geom_line()+theme(axis.text.x=element_blank()))
+})
+```
+
+Test Scores
+================
+
+Column {data-width=150}
+----------
+
+###Filter by State
+
+```{r}
+#Creating a select button for each state and all state so you can see sales for all states or an individual state
+selectInput("scores", label = "State:", choices = c("All",sort(as.character(unique(tgraph$mstate)))), selected="All")
+
+#Creating a reactive dataframe to adjust to the state that was picked
+scores_graph<-reactive({
+  if(input$scores=="All"){
+    tgraph
+  }else{
+    tgraph %>%
+      filter(tgraph$mstate==input$scores)
+  }
+})
+```
+
+###Adjust the Percent Proficient Standard Bar
+
+```{r}
+#Allows the user to pick what they want the national proficiency bar to be
+numericInput("standard", label= "National Proficiency Percent Standard:", 33, min=1, max=100)
+```
+
+
+Column {data-width=800}
+----------------
+
+###Test Scores from 2009 to 2016
+
+```{r}
+#Plotting test scores along with the national proficiency level
+renderPlotly({
+  ggplotly(ggplot(data=scores_graph(),aes(variable,value, group=factor(inst)))+geom_point(aes(color=factor(inst)))+geom_line(aes(color=factor(inst)))+theme(axis.text.x=element_blank())+geom_hline(yintercept=input$standard, linetype="dashed", color = "black"))
+})
+
+```
+
+
+
+Sales
+====================
+
+###Sales from 2014-2018
+
+```{r}
+#Allows the user to pick if they want to see all sales or sales in a certain state
+selectInput("sales", label = "State:", choices = c("All",sort(as.character(unique(scores_sales$mstate)))), selected="All")
+
+#Creates a reactive dataframe depending on the state picked
+state_sales_graph<-reactive({
+  if (input$sales=="All"){
+   scores_sales
+  }else{
+    scores_sales %>%
+  filter(scores_sales$mstate==input$sales)
+  }
+})
+
+renderPlotly({
+  ggplotly(ggplot(data=state_sales_graph(), aes(variable, value, group=factor(inst))) + geom_point(aes(color=factor(inst)))+ geom_line(aes(color=factor(inst)))+theme(axis.text.x = element_blank()))
+})
+
+```
